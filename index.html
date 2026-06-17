@@ -80,6 +80,37 @@
     background: #fff;
     border-radius: 4px;
   }
+  .local-result-panel {
+    margin: 14px 20px 4px;
+    padding: 14px;
+    border: 1px solid #d9e0ec;
+    border-radius: 8px;
+    background: #f8faff;
+    color: #172033;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  .local-result-panel h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+    line-height: 1.35;
+    letter-spacing: 0;
+  }
+  .local-result-panel strong {
+    color: #0f8a53;
+    font-size: 20px;
+  }
+  .local-result-panel a {
+    display: inline-block;
+    margin-top: 8px;
+    color: #2068FF;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .local-submit-loading {
+    opacity: .7;
+    pointer-events: none;
+  }
   @media screen and (min-width: 700px) {
     body.hasbgpic #form1 { max-width: 900px; margin: 0 auto; }
   }
@@ -278,9 +309,21 @@
 
 
 <div style="display: none;"></div>
-
+<script src="config.js"></script>
 <script id="local-clone-script">
 (function () {
+  var STORAGE_KEY = 'wjxY2ECFUTSubmissions';
+
+  function getConfig() {
+    var config = window.WJX_EXAM_CONFIG || {};
+    return {
+      backendUrl: String(config.backendUrl || '').trim(),
+      questionStart: Number(config.questionStart || 3),
+      questionEnd: Number(config.questionEnd || 54),
+      localAnswerKey: config.localAnswerKey || {}
+    };
+  }
+
   function cssEscape(value) {
     if (window.CSS && CSS.escape) return CSS.escape(value);
     return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
@@ -318,6 +361,221 @@
     showToast.timer = window.setTimeout(function () {
       toast.classList.remove('show');
     }, 2200);
+  }
+
+  function getInputValue(id) {
+    var input = document.getElementById(id);
+    return input ? input.value.trim() : '';
+  }
+
+  function getOptionText(input) {
+    var label = input.id ? document.querySelector('[for="' + cssEscape(input.id) + '"]') : null;
+    if (label) return label.textContent.replace(/\s+/g, ' ').trim();
+    var holder = input.closest('.ui-radio') || input.closest('.option_wrap');
+    return holder ? holder.textContent.replace(/\s+/g, ' ').trim() : input.value;
+  }
+
+  function collectSubmission() {
+    var config = getConfig();
+    var answers = {};
+    var answerTexts = {};
+    var unansweredNumbers = [];
+
+    for (var index = config.questionStart; index <= config.questionEnd; index += 1) {
+      var qid = 'q' + index;
+      var selected = document.querySelector('input[name="' + cssEscape(qid) + '"]:checked');
+      if (selected) {
+        answers[qid] = selected.value;
+        answerTexts[qid] = getOptionText(selected);
+      } else {
+        unansweredNumbers.push(index - config.questionStart + 1);
+      }
+    }
+
+    var nameZh = getInputValue('q1');
+    var nameEn = getInputValue('q2');
+    return {
+      examId: 'Y2ECFUT',
+      examTitle: (document.getElementById('htitle') || {}).textContent || document.title,
+      submittedAt: new Date().toISOString(),
+      name: nameZh || nameEn || '未填写',
+      nameZh: nameZh,
+      nameEn: nameEn,
+      answers: answers,
+      answerTexts: answerTexts,
+      unansweredNumbers: unansweredNumbers,
+      userAgent: navigator.userAgent
+    };
+  }
+
+  function scoreLocally(answers) {
+    var key = getConfig().localAnswerKey || {};
+    var questions = Object.keys(key).filter(function (qid) {
+      return key[qid] !== '' && key[qid] !== null && key[qid] !== undefined;
+    });
+    var score = 0;
+    questions.forEach(function (qid) {
+      if (String(answers[qid] || '') === String(key[qid])) score += 1;
+    });
+    return {
+      score: questions.length ? score : null,
+      total: questions.length,
+      percent: questions.length ? Math.round(score / questions.length * 100) : null
+    };
+  }
+
+  function saveLocal(record) {
+    var records = [];
+    try {
+      records = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    } catch (error) {
+      records = [];
+    }
+    records.unshift(record);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(0, 500)));
+  }
+
+  function setSubmitting(button, isSubmitting) {
+    if (!button) return;
+    if (!button.dataset.originalText) button.dataset.originalText = button.textContent;
+    button.textContent = isSubmitting ? '提交中...' : button.dataset.originalText;
+    button.classList.toggle('local-submit-loading', isSubmitting);
+  }
+
+  function showResult(record, message) {
+    var panel = document.querySelector('.local-result-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.className = 'local-result-panel';
+      var submitWrap = document.getElementById('divSubmit');
+      if (submitWrap && submitWrap.parentNode) {
+        submitWrap.parentNode.insertBefore(panel, submitWrap.nextSibling);
+      } else {
+        document.body.appendChild(panel);
+      }
+    }
+    var scoreText = record.total ? '<strong>' + record.score + '/' + record.total + '</strong> 题，正确率 ' + record.percent + '%' : '<strong>待判分</strong>';
+    var unanswered = record.unansweredNumbers && record.unansweredNumbers.length ? '未答题：' + record.unansweredNumbers.join('、') : '全部题目已作答';
+    panel.innerHTML = '<h2>提交完成</h2>' +
+      '<div>姓名：' + escapeHtml(record.name || '未填写') + '</div>' +
+      '<div>分数：' + scoreText + '</div>' +
+      '<div>' + escapeHtml(unanswered) + '</div>' +
+      '<div>' + escapeHtml(message || '') + '</div>' +
+      '<a href="admin.html" target="_blank" rel="noopener">打开后台查看记录</a>';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function escapeHtml(value) {
+    return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function (char) {
+      return {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char];
+    });
+  }
+
+  function encodePayload(data) {
+    var json = JSON.stringify(data);
+    if (window.TextEncoder) {
+      var bytes = new TextEncoder().encode(json);
+      var binary = '';
+      bytes.forEach(function (byte) { binary += String.fromCharCode(byte); });
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    }
+    return btoa(unescape(encodeURIComponent(json))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function jsonp(url, params) {
+    return new Promise(function (resolve, reject) {
+      var callbackName = 'wjxSubmitCallback_' + Date.now() + '_' + Math.floor(Math.random() * 100000);
+      var script = document.createElement('script');
+      var timeout = window.setTimeout(function () {
+        cleanup();
+        reject(new Error('提交超时'));
+      }, 15000);
+
+      function cleanup() {
+        window.clearTimeout(timeout);
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
+
+      window[callbackName] = function (data) {
+        cleanup();
+        resolve(data);
+      };
+
+      params.callback = callbackName;
+      script.onerror = function () {
+        cleanup();
+        reject(new Error('无法连接在线后台'));
+      };
+      script.src = url + (url.indexOf('?') === -1 ? '?' : '&') + Object.keys(params).map(function (key) {
+        return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]);
+      }).join('&');
+      document.body.appendChild(script);
+    });
+  }
+
+  function submitRemote(record) {
+    var backendUrl = getConfig().backendUrl;
+    if (!backendUrl) return Promise.resolve(null);
+    var payload = {
+      examId: record.examId,
+      examTitle: record.examTitle,
+      submittedAt: record.submittedAt,
+      name: record.name,
+      nameZh: record.nameZh,
+      nameEn: record.nameEn,
+      answers: record.answers,
+      unansweredNumbers: record.unansweredNumbers,
+      userAgent: record.userAgent
+    };
+    return jsonp(backendUrl, {
+      action: 'submit',
+      payload: encodePayload(payload)
+    });
+  }
+
+  function handleSubmit(button) {
+    var record = collectSubmission();
+    if (record.unansweredNumbers.length && !window.confirm('还有 ' + record.unansweredNumbers.length + ' 道题未作答，确定提交吗？')) {
+      return;
+    }
+
+    var localScore = scoreLocally(record.answers);
+    record.score = localScore.score;
+    record.total = localScore.total;
+    record.percent = localScore.percent;
+    record.remoteSaved = false;
+
+    setSubmitting(button, true);
+    submitRemote(record).then(function (data) {
+      if (data && !data.ok) throw new Error(data.error || '在线后台提交失败');
+      if (data && data.record) {
+        record.remoteSaved = true;
+        record.remoteId = data.record.id;
+        record.score = data.record.score;
+        record.total = data.record.total;
+        record.percent = data.record.percent;
+      }
+      saveLocal(record);
+      var message = record.remoteSaved ? '已保存到在线后台。' : '已保存到本机后台；接入 Google 表格后，手机提交也会集中保存。';
+      if (!record.total) message += ' 还没有填写答案表，所以暂时不显示具体分数。';
+      showResult(record, message);
+      showToast('提交完成');
+    }).catch(function (error) {
+      saveLocal(record);
+      var message = '在线后台暂时没有连上，已先保存到本机后台。' + (error.message ? '原因：' + error.message : '');
+      if (!record.total) message += ' 还没有填写答案表，所以暂时不显示具体分数。';
+      showResult(record, message);
+      showToast('已保存到本机后台');
+    }).finally(function () {
+      setSubmitting(button, false);
+    });
   }
 
   window.elagerImg = function (event, trigger) {
@@ -362,7 +620,7 @@
     if (form) {
       form.addEventListener('submit', function (event) {
         event.preventDefault();
-        showToast();
+        handleSubmit(document.getElementById('ctlNext'));
       });
     }
 
@@ -370,7 +628,7 @@
     if (submitButton) {
       submitButton.addEventListener('click', function (event) {
         event.preventDefault();
-        showToast();
+        handleSubmit(submitButton);
       });
     }
   });
